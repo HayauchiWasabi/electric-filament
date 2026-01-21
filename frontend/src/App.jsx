@@ -1,76 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import ArticleCard from './components/ArticleCard';
 import AddFeed from './components/AddFeed';
+import useStore, { migrateFromLegacy } from './store/useStore';
 
 // Constants
-const BACKEND_URL = 'http://localhost:3001';
+// const BACKEND_URL = 'http://localhost:3001'; // Moved to store
 
 function App() {
-  const [feeds, setFeeds] = useState(() => {
-    const saved = localStorage.getItem('rss_feeds');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [articles, setArticles] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    // Save feeds whenever they change
-    localStorage.setItem('rss_feeds', JSON.stringify(feeds));
-  }, [feeds]);
+  const {
+    feeds,
+    articles,
+    loading,
+    error,
+    addFeed,
+    removeFeed,
+    fetchFeeds
+  } = useStore();
 
   useEffect(() => {
-    // Initial fetch
-    if (feeds.length > 0) {
-      refreshFeeds();
-    }
-  }, [feeds]); // Refetch when feeds list changes
+    // Attempt migration on mount (one-time check)
+    migrateFromLegacy();
 
-  const refreshFeeds = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const promises = feeds.map(async (url) => {
-        try {
-          const res = await fetch(`${BACKEND_URL}/parse-feed?url=${encodeURIComponent(url)}`);
-          if (!res.ok) throw new Error('Failed to fetch');
-          const data = await res.json();
-          // tag items with source title
-          return data.items.map(item => ({ ...item, source: data.title, feedUrl: url }));
-        } catch (err) {
-          console.error(`Error fetching ${url}:`, err);
-          return [];
-        }
-      });
+    // Initial fetch if feeds exist
+    fetchFeeds();
+  }, [fetchFeeds]);
 
-      const results = await Promise.all(promises);
-      const allArticles = results.flat();
-
-      // Sort by date (newest first)
-      allArticles.sort((a, b) => {
-        const dateA = new Date(a.isoDate || a.pubDate);
-        const dateB = new Date(b.isoDate || b.pubDate);
-        return dateB - dateA;
-      });
-
-      setArticles(allArticles);
-    } catch (err) {
-      setError('Failed to refresh feeds.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddFeed = (url) => {
-    if (!feeds.includes(url)) {
-      setFeeds(prev => [...prev, url]);
-    }
-  };
-
-  const handleRemoveFeed = (urlToRemove) => {
-    setFeeds(prev => prev.filter(url => url !== urlToRemove));
-  };
+  // Use store actions directly
+  const handleAddFeed = (url) => addFeed(url);
+  const handleRemoveFeed = (url) => removeFeed(url);
 
   return (
     <div className="container">
