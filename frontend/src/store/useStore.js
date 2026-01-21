@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-// import { v4 as uuidv4 } from 'uuid'; // Removed to avoid dependency if not needed, or we use simple generator below
 
 // Simple ID generator
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -21,6 +20,9 @@ const useStore = create(
             summary: null,
             isSummarizing: false,
             summaryError: null,
+
+            // Article Tag State (Persisted)
+            articleTags: {}, // { [articleUrl]: string[] }
 
             // Actions
             setActiveTag: (tag) => set({ activeTag: tag }),
@@ -51,6 +53,31 @@ const useStore = create(
                 const { feeds } = get();
                 const newFeeds = feeds.map(f => f.id === id ? { ...f, tags } : f);
                 set({ feeds: newFeeds });
+            },
+
+            // Article Tag Actions
+            addArticleTag: (articleUrl, tag) => {
+                const { articleTags } = get();
+                const currentTags = articleTags[articleUrl] || [];
+                if (!currentTags.includes(tag)) {
+                    set({
+                        articleTags: {
+                            ...articleTags,
+                            [articleUrl]: [...currentTags, tag]
+                        }
+                    });
+                }
+            },
+
+            removeArticleTag: (articleUrl, tag) => {
+                const { articleTags } = get();
+                const currentTags = articleTags[articleUrl] || [];
+                set({
+                    articleTags: {
+                        ...articleTags,
+                        [articleUrl]: currentTags.filter(t => t !== tag)
+                    }
+                });
             },
 
             fetchFeeds: async () => {
@@ -100,10 +127,14 @@ const useStore = create(
             },
 
             generateSummary: async () => {
-                const { articles, activeTag } = get();
-                // Filter articles if a tag is active
+                const { articles, activeTag, articleTags } = get();
+
+                // Filter logic duplicated for summary context (keep consistent with App.jsx)
                 const visibleArticles = activeTag
-                    ? articles.filter(a => a.feedTags && a.feedTags.includes(activeTag))
+                    ? articles.filter(a => {
+                        const aTags = articleTags[a.link] || [];
+                        return (a.feedTags && a.feedTags.includes(activeTag)) || aTags.includes(activeTag);
+                    })
                     : articles;
 
                 if (visibleArticles.length === 0) return;
@@ -131,13 +162,23 @@ const useStore = create(
         }),
         {
             name: 'rss_feeds_store',
-            partialize: (state) => ({ feeds: state.feeds }),
+            partialize: (state) => ({
+                feeds: state.feeds,
+                articleTags: state.articleTags
+            }),
         }
     )
 );
 
-// Migration helper (same as before)
+// Migration helper
 export const migrateData = () => {
+    // Ensure articleTags exists in state if migrating from older version
+    const state = JSON.parse(localStorage.getItem('rss_feeds_store') || '{}');
+    if (state.state && !state.state.articleTags) {
+        useStore.setState({ articleTags: {} });
+    }
+
+    // Previous migrations...
     const rawData = localStorage.getItem('rss_feeds');
     if (rawData && !rawData.includes('"state":')) {
         try {

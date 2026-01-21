@@ -15,6 +15,7 @@ function App() {
     removeFeed,
     fetchFeeds,
     activeTag,
+    articleTags, // Needed for filtering
     generateSummary,
     isSummarizing
   } = useStore();
@@ -31,9 +32,18 @@ function App() {
   const handleAddFeed = (url, tags) => addFeed(url, tags);
   const handleRemoveFeed = (id) => removeFeed(id);
 
-  // Filter articles based on activeTag
+  // Filter articles based on activeTag (Combined Logic)
   const visibleArticles = activeTag
-    ? articles.filter(article => article.feedTags && article.feedTags.includes(activeTag))
+    ? articles.filter(article => {
+      // Check Feed Level Tags
+      const hasFeedTag = article.feedTags && article.feedTags.includes(activeTag);
+
+      // Check Article Level Tags
+      const myTags = articleTags[article.link] || [];
+      const hasArticleTag = myTags.includes(activeTag);
+
+      return hasFeedTag || hasArticleTag;
+    })
     : articles;
 
   return (

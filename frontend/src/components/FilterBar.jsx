@@ -2,10 +2,17 @@ import React from 'react';
 import useStore from '../store/useStore';
 
 const FilterBar = () => {
-    const { feeds, activeTag, setActiveTag } = useStore();
+    const { feeds, articleTags, activeTag, setActiveTag } = useStore();
 
-    // Extract all unique tags
-    const allTags = Array.from(new Set(feeds.flatMap(f => f.tags || []))).sort();
+    // 1. Get tags from Feeds
+    const feedTags = feeds.flatMap(f => f.tags || []);
+
+    // 2. Get tags from Articles
+    // articleTags is { [url]: ['tag1', 'tag2'] }
+    const manualTags = Object.values(articleTags).flat();
+
+    // 3. Combine and sort unique
+    const allTags = Array.from(new Set([...feedTags, ...manualTags])).sort();
 
     if (allTags.length === 0) return null;
 
