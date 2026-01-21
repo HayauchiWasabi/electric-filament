@@ -1,10 +1,9 @@
 import React, { useEffect } from 'react';
 import ArticleCard from './components/ArticleCard';
 import AddFeed from './components/AddFeed';
-import useStore, { migrateFromLegacy } from './store/useStore';
-
-// Constants
-// const BACKEND_URL = 'http://localhost:3001'; // Moved to store
+import FilterBar from './components/FilterBar';
+import DailyBriefing from './components/DailyBriefing';
+import useStore, { migrateData } from './store/useStore';
 
 function App() {
   const {
@@ -14,37 +13,64 @@ function App() {
     error,
     addFeed,
     removeFeed,
-    fetchFeeds
+    fetchFeeds,
+    activeTag,
+    generateSummary,
+    isSummarizing
   } = useStore();
 
   useEffect(() => {
-    // Attempt migration on mount (one-time check)
-    migrateFromLegacy();
+    // Attempt migration (handling both v0->v1 and v1->v2)
+    migrateData();
 
     // Initial fetch if feeds exist
     fetchFeeds();
   }, [fetchFeeds]);
 
-  // Use store actions directly
-  const handleAddFeed = (url) => addFeed(url);
-  const handleRemoveFeed = (url) => removeFeed(url);
+  // Update handler to accept tags
+  const handleAddFeed = (url, tags) => addFeed(url, tags);
+  const handleRemoveFeed = (id) => removeFeed(id);
+
+  // Filter articles based on activeTag
+  const visibleArticles = activeTag
+    ? articles.filter(article => article.feedTags && article.feedTags.includes(activeTag))
+    : articles;
 
   return (
     <div className="container">
       <header style={{
         textAlign: 'center',
-        marginBottom: '4rem',
+        marginBottom: '3rem',
         paddingTop: '2rem'
       }}>
         <h1 className="heading title-gradient" style={{ fontSize: '3rem', marginBottom: '1rem' }}>
           Pulse Reader
         </h1>
-        <p style={{ color: 'var(--text-secondary)' }}>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
           Your personalized news ecosystem
         </p>
+
+        {/* AI Action Button */}
+        {articles.length > 0 && (
+          <button
+            onClick={generateSummary}
+            disabled={isSummarizing}
+            className="btn btn-primary"
+            style={{
+              background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
+              border: 'none'
+            }}
+          >
+            {isSummarizing ? 'Generating Report...' : '✨ Generate Daily Briefing'}
+          </button>
+        )}
       </header>
 
+      <DailyBriefing />
+
       <AddFeed onAdd={handleAddFeed} loading={loading} />
+
+      <FilterBar />
 
       {error && (
         <div style={{ textAlign: 'center', color: '#ef4444', marginBottom: '2rem' }}>
@@ -52,42 +78,60 @@ function App() {
         </div>
       )}
 
-      {/* Subscription List (Mini) */}
+      {/* Subscription List (Mini) - Updated for Object Structure */}
       {feeds.length > 0 && (
         <div style={{
           display: 'flex',
           justifyContent: 'center',
-          gap: '0.5rem',
+          gap: '0.8rem',
           flexWrap: 'wrap',
           marginBottom: '3rem'
         }}>
-          {feeds.map(url => (
-            <span key={url} style={{
+          {feeds.map(feed => (
+            <div key={feed.id} style={{
               background: 'var(--bg-card)',
-              padding: '0.4rem 0.8rem',
+              padding: '0.5rem 1rem',
               borderRadius: '20px',
-              fontSize: '0.8rem',
               border: '1px solid var(--border-subtle)',
               display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              color: 'var(--text-secondary)'
+              flexDirection: 'column',
+              gap: '0.2rem'
             }}>
-              {url.replace(/https?:\/\/(www\.)?/, '').split('/')[0]}
-              <button
-                onClick={() => handleRemoveFeed(url)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  cursor: 'pointer',
-                  fontSize: '1rem',
-                  lineHeight: 1
-                }}
-              >
-                &times;
-              </button>
-            </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                  {feed.url.replace(/https?:\/\/(www\.)?/, '').split('/')[0]}
+                </span>
+                <button
+                  onClick={() => handleRemoveFeed(feed.id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    fontSize: '1rem',
+                    lineHeight: 1
+                  }}
+                >
+                  &times;
+                </button>
+              </div>
+              {/* Show Tags */}
+              {feed.tags && feed.tags.length > 0 && (
+                <div style={{ display: 'flex', gap: '0.3rem' }}>
+                  {feed.tags.map(tag => (
+                    <span key={tag} style={{
+                      fontSize: '0.7rem',
+                      background: 'var(--accent-glow)',
+                      color: 'var(--accent-secondary)', // Cyan for text
+                      padding: '2px 6px',
+                      borderRadius: '4px'
+                    }}>
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -98,7 +142,7 @@ function App() {
         </div>
       ) : (
         <div className="masonry-grid">
-          {articles.map((article, idx) => (
+          {visibleArticles.map((article, idx) => (
             <ArticleCard key={`${article.link}-${idx}`} article={article} />
           ))}
         </div>

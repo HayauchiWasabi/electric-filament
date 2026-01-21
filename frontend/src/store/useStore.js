@@ -1,5 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+// import { v4 as uuidv4 } from 'uuid'; // Removed to avoid dependency if not needed, or we use simple generator below
+
+// Simple ID generator
+const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const BACKEND_URL = 'http://localhost:3001';
 
@@ -7,26 +11,46 @@ const useStore = create(
     persist(
         (set, get) => ({
             // State
-            feeds: [],
+            feeds: [], // { id, url, tags }[]
             articles: [],
             loading: false,
             error: null,
+            activeTag: null,
+
+            // AI State
+            summary: null,
+            isSummarizing: false,
+            summaryError: null,
 
             // Actions
-            addFeed: async (url) => {
-                const { feeds, fetchFeeds } = get();
-                if (feeds.includes(url)) return;
+            setActiveTag: (tag) => set({ activeTag: tag }),
 
-                set({ feeds: [...feeds, url] });
-                // Immediately fetch to update articles
+            addFeed: async (url, tags = []) => {
+                const { feeds, fetchFeeds } = get();
+                if (feeds.some(f => f.url === url)) return;
+
+                const newFeed = {
+                    id: generateId(),
+                    url,
+                    tags
+                };
+
+                set({ feeds: [...feeds, newFeed] });
                 await fetchFeeds();
             },
 
-            removeFeed: (urlToRemove) => {
+            removeFeed: (id) => {
                 const { feeds, articles } = get();
-                const newFeeds = feeds.filter((url) => url !== urlToRemove);
-                const newArticles = articles.filter((article) => article.feedUrl !== urlToRemove);
+                // Remove feed and associated articles
+                const newFeeds = feeds.filter((f) => f.id !== id);
+                const newArticles = articles.filter((article) => article.feedId !== id);
                 set({ feeds: newFeeds, articles: newArticles });
+            },
+
+            updateFeedTags: (id, tags) => {
+                const { feeds } = get();
+                const newFeeds = feeds.map(f => f.id === id ? { ...f, tags } : f);
+                set({ feeds: newFeeds });
             },
 
             fetchFeeds: async () => {
@@ -39,19 +63,21 @@ const useStore = create(
                 set({ loading: true, error: null });
 
                 try {
-                    const promises = feeds.map(async (url) => {
+                    const promises = feeds.map(async (feed) => {
                         try {
-                            const res = await fetch(`${BACKEND_URL}/parse-feed?url=${encodeURIComponent(url)}`);
+                            const res = await fetch(`${BACKEND_URL}/parse-feed?url=${encodeURIComponent(feed.url)}`);
                             if (!res.ok) throw new Error('Failed to fetch');
                             const data = await res.json();
-                            // Tag items with source title and original feed URL for filtering/reference
+
                             return data.items.map((item) => ({
                                 ...item,
                                 source: data.title,
-                                feedUrl: url,
+                                feedUrl: feed.url,
+                                feedId: feed.id,
+                                feedTags: feed.tags
                             }));
                         } catch (err) {
-                            console.error(`Error fetching ${url}:`, err);
+                            console.error(`Error fetching ${feed.url}:`, err);
                             return [];
                         }
                     });
@@ -72,57 +98,69 @@ const useStore = create(
                     set({ error: 'Failed to refresh feeds.', loading: false });
                 }
             },
+
+            generateSummary: async () => {
+                const { articles, activeTag } = get();
+                // Filter articles if a tag is active
+                const visibleArticles = activeTag
+                    ? articles.filter(a => a.feedTags && a.feedTags.includes(activeTag))
+                    : articles;
+
+                if (visibleArticles.length === 0) return;
+
+                set({ isSummarizing: true, summaryError: null, summary: null });
+
+                try {
+                    const res = await fetch(`${BACKEND_URL}/summarize`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ articles: visibleArticles })
+                    });
+
+                    if (!res.ok) throw new Error('Failed to generate summary');
+
+                    const data = await res.json();
+                    set({ summary: data.summary, isSummarizing: false });
+                } catch (err) {
+                    console.error(err);
+                    set({ summaryError: 'Failed to generate summary. Ensure Ollama is running.', isSummarizing: false });
+                }
+            },
+
+            clearSummary: () => set({ summary: null, summaryError: null })
         }),
         {
-            name: 'rss_feeds_store', // Unique name for local storage
-            // We only persist 'feeds', we can re-fetch articles on load to ensure freshness
-            // or persist articles too if offline support is desired. 
-            // For now, persisting just feeds is safer to avoid stale data issues.
+            name: 'rss_feeds_store',
             partialize: (state) => ({ feeds: state.feeds }),
-
-            // Optional: Migration from old "rss_feeds" key
-            // The user used 'rss_feeds' which was just a raw JSON array.
-            // Zustand's persist writes an object { state: { feeds: [...] }, version: 0 }
-            // We can check for old data manually on init if we really wanted, 
-            // but 'name' needs to be different to avoid conflict or we use a custom storage wrapper.
-            // For simplicity, let's keep it separate for a moment, or migration logic can be:
-            onRehydrateStorage: () => (state) => {
-                if (!state.feeds || state.feeds.length === 0) {
-                    const oldData = localStorage.getItem('rss_feeds');
-                    if (oldData) {
-                        try {
-                            const parsed = JSON.parse(oldData);
-                            if (Array.isArray(parsed)) {
-                                // Determine if we need to set state. 
-                                // Since this runs after rehydration, we might need to manually set it.
-                                // However, doing this inside the store definition is cleaner.
-                                // Let's rely on standard zustand behavior for now.
-                            }
-                        } catch (e) { }
-                    }
-                }
-            }
         }
     )
 );
 
-// Manual migration helper (to be called in App.jsx or main.jsx once)
-export const migrateFromLegacy = () => {
-    const oldData = localStorage.getItem('rss_feeds');
-    // Check if it's the old format (raw array) vs new format (object with state)
-    // Old: ["url1", "url2"]
-    // New: {"state":{"feeds":["url1"]},"version":0}
-    if (oldData && !oldData.includes('"state":')) {
+// Migration helper (same as before)
+export const migrateData = () => {
+    const rawData = localStorage.getItem('rss_feeds');
+    if (rawData && !rawData.includes('"state":')) {
         try {
-            const feeds = JSON.parse(oldData);
-            if (Array.isArray(feeds)) {
-                useStore.setState({ feeds });
-                // Clean up old key if we want, or keep it as backup. 
-                // Since I used a new key 'rss_feeds_store', it won't conflict.
+            const urls = JSON.parse(rawData);
+            if (Array.isArray(urls) && typeof urls[0] === 'string') {
+                const newFeeds = urls.map(url => ({
+                    id: generateId(),
+                    url,
+                    tags: []
+                }));
+                useStore.setState({ feeds: newFeeds });
             }
-        } catch (e) {
-            console.error("Migration failed", e);
-        }
+        } catch (e) { }
+    }
+
+    const currentState = useStore.getState();
+    if (currentState.feeds.length > 0 && typeof currentState.feeds[0] === 'string') {
+        const newFeeds = currentState.feeds.map(url => ({
+            id: generateId(),
+            url,
+            tags: []
+        }));
+        useStore.setState({ feeds: newFeeds });
     }
 }
 
